@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Circle Packing Animation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #111; }
+  #canvas { display:block; cursor:crosshair; max-width:100%; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-4 text-white">
+<h1 class="text-2xl font-bold mt-2 mb-3">Circle Packing Animation</h1>
+
+<div class="flex flex-wrap gap-3 mb-3 items-center justify-center">
+  <div class="flex items-center gap-2">
+    <label for="palette" class="text-sm">Palette:</label>
+    <select id="palette" class="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm" aria-label="Color palette">
+      <option value="size">Size (blue→red)</option>
+      <option value="warm">Warm</option>
+      <option value="cool">Cool</option>
+      <option value="mono">Monochrome</option>
+    </select>
+  </div>
+  <button onclick="repack()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-semibold">Repack</button>
+  <button onclick="downloadPng()" class="px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg font-semibold">Download PNG</button>
+</div>
+
+<div class="flex gap-6 mb-3 text-center text-sm">
+  <div>Circles: <span id="circleCount" class="font-bold text-yellow-300">0</span></div>
+  <div>Coverage: <span id="coverage" class="font-bold text-yellow-300">0%</span></div>
+</div>
+
+<canvas id="canvas" width="560" height="560" aria-label="Circle packing canvas"></canvas>
+<div id="tooltip" class="fixed hidden bg-gray-900 border border-gray-600 rounded px-3 py-1 text-sm pointer-events-none"></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+const W = canvas.width, H = canvas.height;
+const MAX_CIRCLES = 200, MAX_RADIUS = 120;
+
+let circles = [], seeds = [], animFrame = null, hoveredIdx = -1;
+
+function repack() {
+  if(animFrame) cancelAnimationFrame(animFrame);
+  circles = [];
+  seeds = Array.from({length: MAX_CIRCLES}, () => ({
+    x: 10 + Math.random() * (W - 20),
+    y: 10 + Math.random() * (H - 20)
+  }));
+  animate();
+}
+
+function animate() {
+  let grew = false;
+  for(let i = 0; i < circles.length; i++) {
+    const c = circles[i];
+    if(c.r >= MAX_RADIUS) continue;
+    if(!overlaps(c, c.r + 1)) { c.r += 1; grew = true; }
+  }
+
+  // Try to spawn new circles from seeds
+  while(circles.length < MAX_CIRCLES) {
+    const s = seeds[circles.length];
+    const candidate = {x: s.x, y: s.y, r: 1};
+    if(!overlaps(candidate, 1) && inBounds(candidate, 1)) {
+      circles.push(candidate); grew = true;
+    } else break;
+  }
+
+  drawAll();
+  if(grew || circles.length < MAX_CIRCLES) animFrame = requestAnimationFrame(animate);
+}
+
+function overlaps(c, r) {
+  for(const o of circles) {
+    if(o === c) continue;
+    const dx = c.x - o.x, dy = c.y - o.y;
+    if(dx*dx + dy*dy < (r + o.r) * (r + o.r)) return true;
+  }
+  return false;
+}
+
+function inBounds(c, r) {
+  return c.x - r >= 0 && c.x + r <= W && c.y - r >= 0 && c.y + r <= H;
+}
+
+function getColor(r, palette) {
+  const maxR = MAX_RADIUS;
+  const t = Math.min(r / maxR, 1);
+  switch(palette) {
+    case 'warm': {
+      const h = 30 + t * 30;
+      return `hsl(${h},90%,${30+t*40}%)`;
+    }
+    case 'cool': {
+      const h = 180 + t * 60;
+      return `hsl(${h},80%,${40+t*30}%)`;
+    }
+    case 'mono':
+      return `hsl(220,15%,${20+t*60}%)`;
+    default: { // size blue→red
+      const h = 240 - t * 240;
+      return `hsl(${h},80%,55%)`;
+    }
+  }
+}
+
+function drawAll() {
+  const palette = document.getElementById('palette').value;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, W, H);
+
+  let area = 0;
+  circles.forEach((c, i) => {
+    area += Math.PI * c.r * c.r;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.fillStyle = i === hoveredIdx ? '#fff' : getColor(c.r, palette);
+    ctx.fill();
+    if(c.r > 15) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  });
+
+  document.getElementById('circleCount').textContent = circles.length;
+  const coverage = Math.min(100, (area / (W * H) * 100)).toFixed(1);
+  document.getElementById('coverage').textContent = coverage + '%';
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = W / rect.width;
+  const scaleY = H / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+  let found = -1;
+  for(let i = circles.length - 1; i >= 0; i--) {
+    const c = circles[i];
+    const dx = mx - c.x, dy = my - c.y;
+    if(dx*dx + dy*dy <= c.r * c.r) { found = i; break; }
+  }
+  hoveredIdx = found;
+  if(found >= 0) {
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+    tooltip.textContent = `r = ${circles[found].r.toFixed(1)}px`;
+    tooltip.classList.remove('hidden');
+  } else {
+    tooltip.classList.add('hidden');
+  }
+  drawAll();
+});
+
+canvas.addEventListener('mouseleave', () => {
+  hoveredIdx = -1;
+  tooltip.classList.add('hidden');
+  drawAll();
+});
+
+function downloadPng() {
+  const link = document.createElement('a');
+  link.download = 'circle-packing.png';
+  link.href = canvas.toDataURL();
+  link.click();
+}
+
+repack();
+</script>
+</body>
+</html>
